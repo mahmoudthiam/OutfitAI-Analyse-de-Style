@@ -1,0 +1,359 @@
+voici mon app qui marche bien 
+detector.py :
+
+#"C:/Users/thiam/Desktop/PC/ProjetStyleApp2/models/yolov8n-fashion.pt")
+import os
+import sys
+import warnings
+import torch
+
+# 1. Configuration critique avant tout import
+os.environ.update({
+    'YOLO_DISABLE_HUB': '1',
+    'YOLO_DO_NOT_TRACK': '1',
+    'YOLO_VERBOSE': 'False'
+})
+
+# 2. Patch radical des imports problématiques
+sys.modules['ultralytics.hub'] = None
+sys.modules['ultralytics.hub.session'] = None
+sys.modules['ultralytics.hub.utils'] = None
+
+# 3. Monkey-patch des constantes nécessaires
+import ultralytics.engine.model as model_module
+model_module.HUB_WEB_ROOT = "https://hub.ultralytics.com"
+model_module.HUBTrainingSession = type('HUBTrainingSession', (), {})
+
+# 4. Maintenant importer YOLO
+from ultralytics import YOLO
+import cv2
+
+class FashionDetector:
+    def __init__(self, model_path="C:/Users/thiam/Desktop/PC/ProjetStyleApp2/models/yolov8n-fashion.pt"):
+        """Charge le modèle en contournant les vérifications de sécurité"""
+        # Solution pour weights_only
+        original_load = torch.load
+        torch.load = lambda *args, **kwargs: original_load(*args, **kwargs, weights_only=False)
+        
+        try:
+            self.model = YOLO(model_path)
+        finally:
+            torch.load = original_load  # Restaure la fonction originale
+
+        self.class_map = {
+            0: "top", 1: "bottom", 
+            2: "dress", 3: "jacket"
+        }
+
+    def detect(self, image_path):
+        """Détection des vêtements"""
+        try:
+            results = self.model.predict(
+                source=image_path,
+                stream=False,
+                show_conf=False,
+                verbose=False
+            )
+            
+            return [{
+                "type": self.class_map[int(box.cls[0])],
+                "bbox": box.xyxy[0].tolist(),
+                "confidence": float(box.conf[0])
+            } for result in results for box in result.boxes]
+            
+        except Exception as e:
+            print(f"Erreur de détection : {str(e)}")
+            return []
+style_analyzer.py :
+import cv2
+import numpy as np
+from sklearn.cluster import KMeans
+
+def get_dominant_color(image, k=3):
+    """Extrait les k couleurs dominantes"""
+    pixels = image.reshape(-1, 3)
+    kmeans = KMeans(n_clusters=k)
+    kmeans.fit(pixels)
+    return kmeans.cluster_centers_.astype(int)
+
+def analyze_fit(bbox, image):
+    """Détecte si un vêtement est 'slim' ou 'oversized'"""
+    x1, y1, x2, y2 = bbox
+    crop = image[y1:y2, x1:x2]
+    
+    # Ratio largeur/hauteur
+    ratio = (x2 - x1) / (y2 - y1)
+    return "slim" if ratio < 0.7 else "oversized"
+main.py :
+import streamlit as st
+from detector import FashionDetector
+from style_analyzer import *
+import cv2
+
+detector = FashionDetector()
+
+st.title("👗 OutfitAI - Niveau 2")
+uploaded_file = st.file_uploader("Uploader une tenue", type=["jpg", "png"])
+
+if uploaded_file:
+    # Sauvegarde temporaire
+    with open("temp.jpg", "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    
+    # Détection
+    detections = detector.detect("temp.jpg")
+    image = cv2.imread("temp.jpg")
+    
+    # Affichage
+    col1, col2 = st.columns(2)
+    with col1:
+        st.image(uploaded_file, caption="Original")
+    
+    with col2:
+        for det in detections:
+            x1, y1, x2, y2 = det["bbox"]
+            cv2.rectangle(image, (x1, y1), (x2, y2), (0,255,0), 2)
+        st.image(image, caption="Détections", channels="BGR")
+    
+    # Analyse
+    if len(detections) >= 2:
+        top = next(d for d in detections if d["type"] in ["top", "jacket"])
+        bottom = next(d for d in detections if d["type"] == "bottom")
+        
+        top_color = get_dominant_color(image[y1:y2, x1:x2])
+        bottom_color = get_dominant_color(image[y1:y2, x1:x2])
+        
+        st.write(f"🔍 Haut : {analyze_fit(top['bbox'], image)} | Bas : {analyze_fit(bottom['bbox'], image)}")
+        st.write(f"🎨 Couleurs dominantes : {top_color[0]} / {bottom_color[0]}")
+
+#######################################################################################version 2#####################################################################################
+detector.py :
+
+import os
+import sys
+import torch
+from ultralytics import YOLO
+import cv2
+
+# Configuration et patches critiques
+os.environ.update({
+    'YOLO_DISABLE_HUB': '1',
+    'YOLO_DO_NOT_TRACK': '1',
+    'YOLO_VERBOSE': 'False'
+})
+
+class FashionDetector:
+    def __init__(self, model_path="C:/Users/thiam/Desktop/PC/ProjetStyleApp2/models/yolov8n-fashion.pt"):
+        """Initialisation robuste du modèle"""
+        # Solution définitive pour weights_only
+        self.original_load = torch.load
+        self._patch_torch_load()
+        
+        try:
+            self.model = YOLO(model_path)
+            # Vérification que le modèle est bien chargé
+            if not hasattr(self.model, 'predict'):
+                raise RuntimeError("Échec du chargement du modèle YOLO")
+        except Exception as e:
+            self._restore_torch_load()
+            raise e
+
+        self.class_map = {
+            0: "top", 1: "bottom", 
+            2: "dress", 3: "jacket",
+            4: "shoes", 5: "accessory"
+        }
+
+    def _patch_torch_load(self):
+        """Patch temporaire de torch.load"""
+        def safe_load(*args, **kwargs):
+            kwargs.pop('weights_only', None)  # Évite le conflit de paramètres
+            return self.original_load(*args, **kwargs)
+        torch.load = safe_load
+
+    def _restore_torch_load(self):
+        """Restaure la fonction originale"""
+        torch.load = self.original_load
+
+    def detect(self, image_path):
+        """Détection robuste avec gestion d'erreur améliorée"""
+        try:
+            # Conversion directe pour éviter les fichiers temporaires
+            if isinstance(image_path, (str, bytes)):
+                results = self.model.predict(
+                    source=image_path,
+                    conf=0.25,  # Seuil de confiance minimum
+                    stream=False,
+                    verbose=False
+                )
+            else:
+                raise ValueError("Type d'image non supporté")
+            
+            detections = []
+            for result in results:
+                for box in result.boxes:
+                    detections.append({
+                        "type": self.class_map.get(int(box.cls[0]), "unknown"),
+                        "bbox": box.xyxy[0].tolist(),
+                        "confidence": float(box.conf[0])
+                    })
+            return detections
+        
+        except Exception as e:
+            print(f"[ERREUR] Échec de détection : {str(e)}")
+            return []
+        finally:
+            self._restore_torch_load()
+
+
+main.py !
+
+
+import streamlit as st
+import cv2
+import numpy as np
+from PIL import Image
+import tempfile
+from detector import FashionDetector
+from style_analyzer import *
+
+# Initialisation du détecteur
+detector = FashionDetector()
+
+# Configuration de la page
+st.set_page_config(page_title="OutfitAI - Analyse de Style", layout="wide")
+st.title("👗 OutfitAI - Analyseur de Tenue")
+
+# Sidebar pour les paramètres
+with st.sidebar:
+    st.header("Paramètres")
+    confidence_threshold = st.slider("Seuil de confiance", 0.1, 1.0, 0.5)
+    show_dominant_colors = st.checkbox("Afficher les couleurs dominantes", True)
+    show_technical = st.checkbox("Afficher les détails techniques", False)
+
+# Zone de téléchargement
+uploaded_file = st.file_uploader("Téléversez votre tenue", type=["jpg", "png", "jpeg"])
+
+if uploaded_file:
+    # Lecture de l'image
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    
+    # Sauvegarde temporaire pour la détection
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
+        tmp_file.write(uploaded_file.getbuffer())
+        tmp_path = tmp_file.name
+    
+    # Détection
+    with st.spinner("Analyse en cours..."):
+        try:
+            detections = detector.detect(tmp_path)
+        finally:
+            # Nettoyage du fichier temporaire
+            import os
+            os.unlink(tmp_path)
+    
+    if not detections:
+        st.warning("Aucun vêtement détecté ! Essayez avec une autre image.")
+    else:
+        # Affichage en deux colonnes
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Image Originale")
+            st.image(uploaded_file, use_column_width=True)
+            
+        with col2:
+            # Dessiner les bounding boxes
+            annotated_image = image.copy()
+            for det in detections:
+                if det["confidence"] >= confidence_threshold:
+                    x1, y1, x2, y2 = map(int, det["bbox"])
+                    cv2.rectangle(annotated_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    label = f"{det['type']} {det['confidence']:.0%}"
+                    cv2.putText(annotated_image, label, (x1, y1-10), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
+            
+            st.subheader("Détections")
+            st.image(annotated_image, channels="BGR", use_column_width=True)
+        
+        # Section d'analyse
+        st.divider()
+        st.subheader("📊 Analyse Complète")
+        
+        # Filtrage des détections par seuil de confiance
+        filtered_detections = [d for d in detections if d["confidence"] >= confidence_threshold]
+        
+        # Cartes de résultats
+        cols = st.columns(min(4, len(filtered_detections)))
+        for idx, det in enumerate(filtered_detections[:4]):
+            with cols[idx]:
+                x1, y1, x2, y2 = map(int, det["bbox"])
+                crop_img = image[y1:y2, x1:x2]
+                
+                with st.expander(f"{det['type'].upper()} ({det['confidence']:.0%})"):
+                    st.image(crop_img, channels="BGR")
+                    st.write(f"**Type:** {det['type']}")
+                    st.write(f"**Confiance:** {det['confidence']:.0%}")
+                    st.write(f"**Coupe:** {analyze_fit(det['bbox'], image)}")
+                    
+                    if show_dominant_colors:
+                        colors = get_dominant_color(crop_img)
+                        st.write("**Couleurs dominantes:**")
+                        cols_color = st.columns(len(colors))
+                        for i, color in enumerate(colors):
+                            with cols_color[i]:
+                                st.color_picker(label="", 
+                                              value=f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}", 
+                                              key=f"color_{idx}_{i}")
+
+        # Suggestions basiques
+        if len(filtered_detections) >= 2:
+            tops = [d for d in filtered_detections if d["type"] in ["top", "jacket"]]
+            bottoms = [d for d in filtered_detections if d["type"] == "bottom"]
+            
+            if tops and bottoms:
+                st.divider()
+                st.subheader("💡 Suggestions d'Association")
+                
+                # Analyse des couleurs
+                top_colors = get_dominant_color(image[
+                    int(tops[0]["bbox"][1]):int(tops[0]["bbox"][3]),
+                    int(tops[0]["bbox"][0]):int(tops[0]["bbox"][2])
+                ])
+                
+                bottom_colors = get_dominant_color(image[
+                    int(bottoms[0]["bbox"][1]):int(bottoms[0]["bbox"][3]),
+                    int(bottoms[0]["bbox"][0]):int(bottoms[0]["bbox"][2])
+                ])
+                
+                # Affichage des résultats
+                col_top, col_bottom = st.columns(2)
+                with col_top:
+                    st.write(f"🔷 **Haut {tops[0]['type']}**")
+                    st.color_picker("Couleur dominante", 
+                                   value=f"#{top_colors[0][0]:02x}{top_colors[0][1]:02x}{top_colors[0][2]:02x}",
+                                   key="top_color")
+                
+                with col_bottom:
+                    st.write(f"🔶 **Bas {bottoms[0]['type']}**")
+                    st.color_picker("Couleur dominante", 
+                                   value=f"#{bottom_colors[0][0]:02x}{bottom_colors[0][1]:02x}{bottom_colors[0][2]:02x}",
+                                   key="bottom_color")
+                
+                # Logique de compatibilité améliorée
+                color_diff = np.mean(np.abs(top_colors[0] - bottom_colors[0]))
+                if color_diff > 100:
+                    st.success("✅ Bon contraste de couleurs !")
+                elif color_diff > 50:
+                    st.info("🌤️ Combinaison neutre, peut être améliorée")
+                else:
+                    st.warning("⚠️ Contrast faible, essayez avec des couleurs plus opposées")
+
+        # Détails techniques (optionnel)
+        if show_technical and detections:
+            st.divider()
+            with st.expander("🔍 Détails techniques (debug)"):
+                st.json(detections)
+
+

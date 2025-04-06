@@ -1,0 +1,5 @@
+venv/
+models/yolov8n-fashion.pt
+__pycache__/
+*.pyc
+.vscode/
