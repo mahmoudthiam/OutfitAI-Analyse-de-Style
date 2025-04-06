@@ -57,7 +57,7 @@ if uploaded_file:
         
         with col1:
             st.subheader("Image Originale")
-            st.image(uploaded_file, use_column_width=True)
+            st.image(uploaded_file, use_container_width=True)
             
         with col2:
             # Dessiner les bounding boxes
@@ -71,7 +71,7 @@ if uploaded_file:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
             
             st.subheader("Détections")
-            st.image(annotated_image, channels="BGR", use_column_width=True)
+            st.image(annotated_image, channels="BGR", use_container_width=True)
         
         # Section d'analyse
         st.divider()
