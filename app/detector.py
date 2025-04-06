@@ -13,7 +13,8 @@ os.environ.update({
 })
 
 class FashionDetector:
-    def __init__(self, model_path="C:/Users/thiam/Desktop/PC/ProjetStyleApp2/models/yolov8n-fashion.pt"):
+    def __init__(self, model_path="https://github.com/mahmoudthiam/OutfitAI-Analyse-de-Style/blob/main/yolov8n-fashion.pt
+"):
         """Initialisation robuste du modèle"""
         # Solution définitive pour weights_only
         self.original_load = torch.load
